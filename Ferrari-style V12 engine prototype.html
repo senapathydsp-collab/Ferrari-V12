@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>V12 Engine Prototype</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#e9ecef;--ink:#14181c;--mut:#59636d;--pan:rgba(255,255,255,.84);--line:rgba(20,24,28,.18);--acc:#a87c00}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1316;--ink:#e8ebee;--mut:#8f99a3;--pan:rgba(18,23,28,.84);--line:rgba(255,255,255,.16);--acc:#f2c200}}
+:root[data-theme="dark"]{--bg:#0f1316;--ink:#e8ebee;--mut:#8f99a3;--pan:rgba(18,23,28,.84);--line:rgba(255,255,255,.16);--acc:#f2c200}
+html{scroll-padding-top:env(safe-area-inset-top,0px);height:100%}
+body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:400 14px/1.45 Barlow,system-ui,sans-serif;overflow:hidden}
+canvas{position:fixed;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}
+.pan{position:fixed;background:var(--pan);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+h1{font:700 26px/1 'Barlow Condensed',sans-serif;margin:0 0 6px;letter-spacing:.01em}
+h2{font:700 19px/1.1 'Barlow Condensed',sans-serif;margin:0 0 4px;color:var(--acc)}
+p{margin:0;color:var(--mut)}
+#title{top:calc(12px + env(safe-area-inset-top,0px));left:12px;width:310px}
+#info{top:calc(12px + env(safe-area-inset-top,0px));right:12px;width:290px}
+#ctl{bottom:calc(12px + env(safe-area-inset-bottom,0px));left:12px;width:310px}
+label{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-weight:500}
+label output{color:var(--acc);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--acc);margin:2px 0 0}
+.row{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:10px}
+.row label{margin:0;gap:5px}
+button{font:500 13px Barlow,sans-serif;color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer}
+button:hover,button:focus-visible{border-color:var(--acc);outline:none}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+#fo{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;margin-top:6px}
+#fo i{font:700 13px 'Barlow Condensed',sans-serif;text-align:center;font-style:normal;padding:3px 0;border:1px solid var(--line);border-radius:4px;color:var(--mut)}
+#fo i.on{background:var(--acc);color:#111;border-color:var(--acc)}
+@media (max-width:760px){#title p{display:none}#title{width:auto}#info{top:calc(56px + env(safe-area-inset-top,0px));left:12px;width:auto}#ctl{width:auto;right:12px}}
+</style></head><body>
+<div id="title" class="pan"><h1>Naturally aspirated V12</h1><p>Prototype of a Ferrari F140-style engine: 65° vee, 6.5 L, 48 valves. Drag to orbit, scroll to zoom, tap any part.</p></div>
+<div id="info" class="pan"><h2 id="it">6,496 cc · 12 cylinders</h2><p id="id">Bore × stroke 94 × 78.5 mm, direct injection at 350 bar, dry sump, redline near 8,900 rpm. Tap a part for details.</p></div>
+<div id="ctl" class="pan">
+<label>Engine speed <output id="ro">3000 rpm</output></label><input id="rpm" type="range" min="0" max="9000" step="100" value="3000" aria-label="Engine speed">
+<label>Exploded view <output id="eo">0%</output></label><input id="ex" type="range" min="0" max="100" value="0" aria-label="Exploded view">
+<div class="row" id="ly"></div>
+<div class="row"><button id="pz">Pause</button><button id="rv">Reset view</button></div>
+<label style="margin-top:10px">Firing order, shown at 1/60 speed</label><div id="fo"></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const T=THREE,V=(x,y,z)=>new T.Vector3(x,y,z),sc=(v,k)=>v.clone().multiplyScalar(k),Y=V(0,1,0);
+const t=32.5*Math.PI/180,R=.39,L=1.3,BORE=.85,SP=1,PH=[0,240,120,120,240,0].map(d=>d*Math.PI/180);
+const ORDER=[1,7,5,11,3,9,6,12,2,8,4,10];
+const scene=new T.Scene(),cam=new T.PerspectiveCamera(40,1,.1,100);
+const rn=new T.WebGLRenderer({antialias:true,alpha:true});rn.setPixelRatio(Math.min(devicePixelRatio,2));document.body.prepend(rn.domElement);
+scene.add(new T.HemisphereLight(0xffffff,0x445566,.95));
+let l=new T.DirectionalLight(0xffffff,1.1);l.position.set(6,10,8);scene.add(l);
+l=new T.DirectionalLight(0xffd9a0,.7);l.position.set(-8,3,-6);scene.add(l);
+const M=(c,m=.5,r=.4,o={})=>new T.MeshStandardMaterial(Object.assign({color:c,metalness:m,roughness:r},o));
+const alu=M(0x9aa4ae),steel=M(0xcdd2d8,.8,.3),redM=M(0xb3221b,.3,.45,{transparent:true,opacity:.4,depthWrite:false}),ti=M(0xc2b48a,.7,.35),gold=M(0xf2c200,.4,.4);
+const glass=M(0x7fa0c0,.2,.5,{transparent:true,opacity:.14,side:T.DoubleSide,depthWrite:false});
+const exM=M(0x8a5a3a,.6,.5),inM=M(0x5f6b78,.6,.4);
+const cyl=new T.CylinderGeometry(1,1,1,20),ocyl=new T.CylinderGeometry(1,1,1,28,1,true),box=new T.BoxGeometry(1,1,1);
+const root=new T.Group();root.position.y=-1.6;scene.add(root);
+const INFO={
+block:['Engine block','Cast aluminium alloy, one casting per bank of six. Carries coolant jackets, oil galleries and the main-bearing structure.'],
+liner:['Cylinder liners','Hard-coated bores (Nikasil-type) in the aluminium block. 94 mm bore, 78.5 mm stroke.'],
+head:['Cylinder head','Pent-roof combustion chambers, four valves per cylinder (48 in total) and a central spark plug. Compression ratio about 13.5:1.'],
+cover:['Cam covers','Seal the valvetrain. Ferrari traditionally finishes them in red crackle paint.'],
+cam:['Camshafts','Four in total, DOHC: intake and exhaust per bank. They turn at half crank speed with variable valve timing.'],
+intake:['Intake plenum and runners','Large central plenum feeding one tuned runner per cylinder. Variable-geometry tracts shift between torque and top-end power.'],
+exhaust:['Exhaust headers','Equal-length runners into a collector per bank, tuned for scavenging and the V12 sound. Valved mufflers open at high load.'],
+piston:['Pistons','Forged aluminium with low-friction coatings. Yellow glow marks each cylinder as it fires, in firing order.'],
+rod:['Connecting rods','Forged steel or titanium. Two rods, one per bank, share each crankpin.'],
+crank:['Crankshaft','Forged steel with six crankpins and counterweights. Rotation drives pistons, flywheel and the rear dual-clutch transaxle.'],
+fly:['Flywheel','Couples the crank to the gearbox clutch. The gold marker shows rotation.']};
+const LY={};
+function grp(n,dir){const g=new T.Group();g.userData.dir=dir;root.add(g);(LY[n]=LY[n]||[]).push(g);return g}
+function place(m,a,b,r){const d=b.clone().sub(a),n=d.length();m.scale.set(r,n,r);m.position.copy(a).addScaledVector(d,.5);m.quaternion.setFromUnitVectors(Y,d.normalize())}
+function tube(a,b,r,mat,k,p,geo){const m=new T.Mesh(geo||cyl,mat);place(m,a,b,r);m.userData.k=k;p.add(m);return m}
+function bx(w,h,d,mat,pos,k,p,q){const m=new T.Mesh(box,mat);m.scale.set(w,h,d);m.position.copy(pos);if(q)m.quaternion.copy(q);m.userData.k=k;p.add(m);return m}
+const edgeM=new T.LineBasicMaterial({color:0x8fa3b8,transparent:true,opacity:.5});
+const gin=grp('intake',V(0,1.6,0));
+bx(5.6,.55,1.1,inM,V(0,3.6,0),'intake',gin);
+const CY=[],cams=[];
+[1,-1].forEach((s,b)=>{
+ const d=V(0,Math.cos(t),s*Math.sin(t)),o=V(0,-Math.sin(t),s*Math.cos(t)),q=new T.Quaternion().setFromUnitVectors(Y,d);
+ const gb=grp('block',sc(d,.5)),gh=grp('head',sc(d,1.2)),gc=grp('cams',sc(d,2.1)),ge=grp('exhaust',V(0,-.2,s*1.6));
+ bx(6.2,1.4,1.25,glass,sc(d,1.5),'block',gb,q);
+ const e=new T.LineSegments(new T.EdgesGeometry(box),edgeM);e.scale.set(6.2,1.4,1.25);e.position.copy(sc(d,1.5));e.quaternion.copy(q);gb.add(e);
+ bx(6.2,.6,1.25,alu,sc(d,2.5),'head',gh,q);
+ bx(6.0,.6,1.15,redM,sc(d,3.2),'cover',gh,q);
+ [-1,1].forEach(sd=>{const g=new T.Group();g.position.copy(sc(d,2.97)).addScaledVector(o,sd*.3);gc.add(g);
+  const sh=new T.Mesh(cyl,steel);sh.scale.set(.07,6,.07);sh.rotation.z=Math.PI/2;sh.userData.k='cam';g.add(sh);
+  for(let i=0;i<12;i++){const lb=new T.Mesh(box,gold);lb.scale.set(.22,.16,.16);const ph=i*1.9;lb.position.set((i-5.5)*.5,.08*Math.cos(ph),.08*Math.sin(ph));lb.rotation.x=ph;lb.userData.k='cam';g.add(lb)}
+  cams.push(g)});
+ const lc=V(0,3.3,0);
+ gc.userData.dir=sc(d,2.1);
+ tube(V(-3,.9,s*3),V(3.2,.9,s*3),.17,exM,'exhaust',ge);
+ for(let j=0;j<6;j++){
+  const x=(j-2.5)*SP+s*.13,p0=sc(d,.85),p1=sc(d,2.15);p0.x=p1.x=x;
+  tube(p0,p1,BORE/2+.03,glass,'liner',gb,ocyl);
+  const hp=sc(d,2.5).addScaledVector(o,-.45);hp.x=x;const ip=V(x,3.4,s*.3);
+  tube(ip,hp,.17,inM,'intake',gin);
+  const ho=sc(d,2.5).addScaledVector(o,.45);ho.x=x;const ec=V(x,.9,s*3);
+  tube(ho,ec,.13,exM,'exhaust',ge);
+  const pm=new T.Mesh(cyl,M(0xdadee3,.8,.3,{emissive:0x000000}));pm.scale.set(BORE/2-.03,.5,BORE/2-.03);pm.quaternion.copy(q);pm.userData.k='piston';root.add(pm);
+  const rd=new T.Mesh(cyl,ti);rd.userData.k='rod';root.add(rd);
+  const n=b?j+7:j+1,slot=ORDER.indexOf(n);
+  let tdc=((s*t-PH[j])*180/Math.PI%360+360)%360,best=0,bd=1e9;
+  [0,360].forEach(k=>{const F=tdc+k,df=Math.abs(((F-slot*60+1080)%720)-360);const dd=Math.abs(360-df);if(dd<bd){bd=dd;best=F}});
+  CY.push({x,d,o,pm,rd,j,n,F:best%720});
+ }});
+const throws=[];const gr=new T.Group();root.add(gr);
+tube(V(-3.6,0,0),V(4.4,0,0),.2,steel,'crank',gr);
+for(let k=0;k<6;k++){const g=new T.Group();root.add(g);const x=(k-2.5)*SP;
+ tube(V(x-.2,R,0),V(x+.2,R,0),.17,steel,'crank',g);
+ [-1,1].forEach(sd=>{bx(.1,R+.25,.5,steel,V(x+sd*.27,(R-.1)/2,0),'crank',g);bx(.1,.55,.8,alu,V(x+sd*.27,-.4,0),'crank',g)});
+ throws.push(g)}
+const fw=new T.Group();root.add(fw);
+const fd=new T.Mesh(cyl,alu);fd.scale.set(1,.18,1);fd.rotation.z=Math.PI/2;fd.position.x=4.6;fd.userData.k='fly';fw.add(fd);
+bx(.22,.2,.2,gold,V(4.6,.85,0),'fly',fw);
+let th=0,rpm=3000,paused=matchMedia('(prefers-reduced-motion:reduce)').matches;
+const fo=document.getElementById('fo');ORDER.forEach(n=>{const i=document.createElement('i');i.textContent=n;i.id='f'+n;fo.appendChild(i)});
+function upd(){
+ const th720=(th*180/Math.PI)%720;
+ CY.forEach(c=>{const a=th+PH[c.j],P=V(0,R*Math.cos(a),R*Math.sin(a)),s=P.dot(c.d)+Math.sqrt(L*L-P.dot(c.o)**2),pin=sc(c.d,s);P.x=pin.x=c.x;
+  place(c.rd,P,pin,.08);c.pm.position.copy(pin).addScaledVector(c.d,.12);
+  const dd=((th720-c.F)%720+720)%720,f=dd<90?1-dd/90:0;c.pm.material.emissive.setRGB(f,.55*f,.05*f);
+  document.getElementById('f'+c.n).classList.toggle('on',f>.35)});
+ throws.forEach((g,k)=>g.rotation.x=th+PH[k]);fw.rotation.x=th;
+ cams.forEach(g=>g.rotation.x=th/2);
+}
+function explode(){const e=document.getElementById('ex').value/100*1.2;Object.values(LY).flat().forEach(g=>g.position.copy(g.userData.dir).multiplyScalar(e))}
+const ly=document.getElementById('ly');
+[['block','Block'],['head','Heads'],['cams','Cams'],['intake','Intake'],['exhaust','Exhaust']].forEach(([k,n])=>{
+ const lb=document.createElement('label');lb.innerHTML='<input type="checkbox" checked> '+n;
+ lb.querySelector('input').onchange=e=>LY[k].forEach(g=>g.visible=e.target.checked);ly.appendChild(lb)});
+const $=id=>document.getElementById(id);
+$('rpm').oninput=e=>{rpm=+e.target.value;$('ro').textContent=rpm+' rpm'};
+$('ex').oninput=e=>{$('eo').textContent=e.target.value+'%';explode()};
+$('pz').onclick=e=>{paused=!paused;e.target.textContent=paused?'Play':'Pause'};
+$('pz').textContent=paused?'Play':'Pause';
+let az=-.85,el=.3,dist=12;const rv=()=>{az=-.85;el=.3;dist=12};$('rv').onclick=rv;
+function camUpd(){cam.position.set(Math.sin(az)*Math.cos(el)*dist,1.6+Math.sin(el)*dist,Math.cos(az)*Math.cos(el)*dist);cam.lookAt(0,1.4,0)}
+const cv=rn.domElement,ray=new T.Raycaster(),mv=new T.Vector2();let drag=null;
+cv.onpointerdown=e=>{drag={x:e.clientX,y:e.clientY,m:0};cv.setPointerCapture(e.pointerId);cv.style.cursor='grabbing'};
+cv.onpointermove=e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.m+=Math.abs(dx)+Math.abs(dy);az-=dx*.007;el=Math.max(-.2,Math.min(1.4,el+dy*.005));drag.x=e.clientX;drag.y=e.clientY};
+cv.onpointerup=e=>{cv.style.cursor='grab';if(drag&&drag.m<5)pick(e);drag=null};
+cv.onwheel=e=>{e.preventDefault();dist=Math.max(5,Math.min(22,dist*(1+e.deltaY*.001)))};
+function vis(o){for(;o;o=o.parent)if(!o.visible)return false;return true}
+function pick(e){mv.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);ray.setFromCamera(mv,cam);
+ const h=ray.intersectObjects(root.children,true).find(i=>i.object.userData.k&&vis(i.object)&&i.object.material.opacity!==.14);
+ const r=h&&INFO[h.object.userData.k];if(r){$('it').textContent=r[0];$('id').textContent=r[1]}}
+function size(){rn.setSize(innerWidth,innerHeight);cam.aspect=innerWidth/innerHeight;cam.fov=innerWidth<760?60:40;cam.updateProjectionMatrix()}
+addEventListener('resize',size);size();
+let last=performance.now();
+(function loop(now){requestAnimationFrame(loop);const dt=Math.min((now-last)/1000,.05);last=now;
+ if(!paused)th+=rpm/60*2*Math.PI/60*dt;th%=Math.PI*4;
+ upd();camUpd();rn.render(scene,cam)})(last);
+</script></body></html>
